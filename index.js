@@ -24,6 +24,37 @@ async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
+
+    const db = client.db("garmentPilot");
+    const usersCollection = db.collection("users");
+    const productsCollection = db.collection("products");
+
+    // users api
+    app.post("/users", async (req, res) => {
+      const user = req.body;
+      const result = await usersCollection.insertOne(user);
+      res.send(result);
+    });
+
+    // products api
+
+    app.get("/products", async (req, res) => {
+      const query = {};
+      const { email } = req.query;
+      if (email) {
+        query.createdBy = email;
+      }
+      const cursor = productsCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    app.post("/products", async (req, res) => {
+      const product = req.body;
+      const result = await productsCollection.insertOne(product);
+      res.send(result);
+    });
+
     // Send a ping to confirm a successful connection
 
     await client.db("admin").command({ ping: 1 });
