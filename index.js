@@ -3,6 +3,7 @@ const app = express();
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
+const stripe = require("stripe")(`${process.env.STRIPE_API_KEY}`);
 const port = process.env.PORT || 3000;
 
 // middleware
@@ -42,14 +43,29 @@ async function run() {
     });
 
     // products api
-
+    // all product
     app.get("/products", async (req, res) => {
       const query = {};
       const { email } = req.query;
       if (email) {
         query.createdBy = email;
       }
-      const cursor = productsCollection.find(query);
+      const cursor = productsCollection.find(query).sort({ createdAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    // our products
+    app.get("/our-products", async (req, res) => {
+      const query = {};
+      const { showOnHomePage } = req.query;
+      if (showOnHomePage) {
+        query.showOnHomePage = showOnHomePage === "true";
+      }
+
+      const cursor = productsCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(6);
       const result = await cursor.toArray();
       res.send(result);
     });
@@ -64,6 +80,39 @@ async function run() {
       const product = req.body;
       const result = await productsCollection.insertOne(product);
       res.send(result);
+    });
+
+    // payment related api of stripe
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            // Provide the exact Price ID (for example, price_1234) of the product you want to sell
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: paymentInfo?.productName,
+                images: [paymentInfo?.image],
+              },
+              unit_amount: parseInt(paymentInfo?.totalPrice * 100), // amount in cents
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: paymentInfo.email,
+        mode: "payment",
+        metadata: {
+          productId: paymentInfo?.productId,
+          orderQuantity: paymentInfo?.orderQuantity,
+          manager: paymentInfo?.manager,
+        },
+        success_url: `${process.env.SITE_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.SITE_DOMAIN}/product/${paymentInfo?.productId}`,
+      });
+      
+
+      res.send({ url: session.url });
     });
 
     // Send a ping to confirm a successful connection
