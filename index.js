@@ -163,7 +163,6 @@ async function run() {
       const updatedProduct = {
         $set: {
           quantity: Number(product.quantity) - orderQuantity,
-          trackingId: trackingId,
         },
       };
 
@@ -211,19 +210,11 @@ async function run() {
       if (!product) {
         return res.status(404).send({ message: "Product not found" });
       }
-      const productTrackingId = product.trackingId;
-      //  Prevent duplicate order
-      const existingOrder = await ordersCollection.findOne({
-        trackingId: productTrackingId,
-      });
-      if (existingOrder) {
-        return res.send({ message: "Order already processed" });
-      }
+
       const trackingId = generateTrackingId();
       const updatedProduct = {
         $set: {
           quantity: Number(product.quantity) - orderQuantity,
-          trackingId: trackingId,
         },
       };
       //  Update product quantity
@@ -252,6 +243,27 @@ async function run() {
         result: result.modifiedCount,
         trackingId: trackingId,
       });
+    });
+
+    // buyer order related apis
+    app.get("/my-orders", async (req, res) => {
+      const query = {};
+      const email = req.query.email;
+      if (email) {
+        query.buyer = email;
+      }
+      const cursor = ordersCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    // cancel order
+    app.delete("/cancel-order/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await ordersCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
