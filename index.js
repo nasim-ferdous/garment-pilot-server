@@ -199,6 +199,61 @@ async function run() {
       });
     });
 
+    // order api for cash on delivery orders
+    app.post("/orders", async (req, res) => {
+      const bookingInfo = req.body;
+      console.log(bookingInfo);
+      const productId = bookingInfo.productId;
+      const productQuery = { _id: new ObjectId(productId) };
+      const orderQuantity = Number(bookingInfo.orderQuantity);
+
+      const product = await productsCollection.findOne(productQuery);
+      if (!product) {
+        return res.status(404).send({ message: "Product not found" });
+      }
+      const productTrackingId = product.trackingId;
+      //  Prevent duplicate order
+      const existingOrder = await ordersCollection.findOne({
+        trackingId: productTrackingId,
+      });
+      if (existingOrder) {
+        return res.send({ message: "Order already processed" });
+      }
+      const trackingId = generateTrackingId();
+      const updatedProduct = {
+        $set: {
+          quantity: Number(product.quantity) - orderQuantity,
+          trackingId: trackingId,
+        },
+      };
+      //  Update product quantity
+      const result = await productsCollection.updateOne(
+        productQuery,
+        updatedProduct
+      );
+      //  Create order
+      const orderInfo = {
+        productId: bookingInfo.productId,
+        productName: product.name,
+        manager: bookingInfo.manager,
+        status: "pending",
+        orderedAt: new Date().toLocaleString(),
+        orderQuantity,
+        buyer: bookingInfo.email,
+        paymentOption: product.paymentOptions,
+        paymentStatus: "cash on delivery",
+        trackingId: trackingId,
+      };
+      const orderResult = await ordersCollection.insertOne(orderInfo);
+
+      res.send({
+        success: true,
+        orderId: orderResult.insertedId,
+        result: result.modifiedCount,
+        trackingId: trackingId,
+      });
+    });
+
     // Send a ping to confirm a successful connection
 
     await client.db("admin").command({ ping: 1 });
