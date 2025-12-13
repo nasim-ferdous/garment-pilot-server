@@ -4,7 +4,20 @@ const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const stripe = require("stripe")(`${process.env.STRIPE_API_KEY}`);
+const crypto = require("crypto");
 const port = process.env.PORT || 3000;
+
+function generateTrackingId() {
+  const prefix = "PRCL"; // your brand prefix
+
+  // Format date as YYYYMMDD
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+  // 6-char random hex
+  const random = crypto.randomBytes(3).toString("hex").toUpperCase();
+
+  return `${prefix}-${date}-${random}`;
+}
 
 // middleware
 app.use(cors());
@@ -29,6 +42,7 @@ async function run() {
     const db = client.db("garmentPilot");
     const usersCollection = db.collection("users");
     const productsCollection = db.collection("products");
+    const ordersCollection = db.collection("orders");
 
     // users api
     app.post("/users", async (req, res) => {
@@ -116,31 +130,73 @@ async function run() {
 
       res.send({ url: session.url });
     });
+    // success payment api
     app.patch("/success-payment", async (req, res) => {
       const sessionId = req.query.session_id;
+
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       console.log(session);
-      if (session.payment_status === "paid") {
-        const id = session.metadata.productId;
-        const query = { _id: new ObjectId(id) };
-        const product = await productsCollection.findOne(query);
-        if (product) {
-          const updatedProduct = {
-            $set: {
-              quantity:
-                Number(product.quantity) -
-                Number(session.metadata.orderQuantity),
-            },
-          };
-          const result = await productsCollection.updateOne(
-            query,
-            updatedProduct
-          );
-          return res.send(result);
-        }
-        return res.send({ message: "Product not found" });
+
+      if (session.payment_status !== "paid") {
+        return res.status(400).send({ message: "Payment not completed" });
       }
-      res.send({ message: false });
+
+      const productId = session.metadata.productId;
+      const orderQuantity = Number(session.metadata.orderQuantity);
+
+      const productQuery = { _id: new ObjectId(productId) };
+      const product = await productsCollection.findOne(productQuery);
+
+      if (!product) {
+        return res.status(404).send({ message: "Product not found" });
+      }
+
+      //  Prevent duplicate order
+      const existingOrder = await ordersCollection.findOne({
+        transactionId: session.payment_intent,
+      });
+
+      if (existingOrder) {
+        return res.send({ message: "Order already processed" });
+      }
+      const trackingId = generateTrackingId();
+      const updatedProduct = {
+        $set: {
+          quantity: Number(product.quantity) - orderQuantity,
+          trackingId: trackingId,
+        },
+      };
+
+      //  Update product quantity
+      const result = await productsCollection.updateOne(
+        productQuery,
+        updatedProduct
+      );
+
+      //  Create order
+      const orderInfo = {
+        productId,
+        productName: product.name,
+        manager: session.metadata.manager,
+        status: "pending",
+        orderedAt: new Date().toLocaleString(),
+        orderQuantity,
+        buyer: session.customer_email,
+        paymentOption: product.paymentOptions,
+        paymentStatus: "paid",
+        transactionId: session.payment_intent,
+        trackingId: trackingId,
+      };
+
+      const orderResult = await ordersCollection.insertOne(orderInfo);
+
+      res.send({
+        success: true,
+        orderId: orderResult.insertedId,
+        result: result.modifiedCount,
+        transactionId: session.payment_intent,
+        trackingId: trackingId,
+      });
     });
 
     // Send a ping to confirm a successful connection
