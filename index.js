@@ -6,6 +6,13 @@ require("dotenv").config();
 const stripe = require("stripe")(`${process.env.STRIPE_API_KEY}`);
 const crypto = require("crypto");
 const port = process.env.PORT || 3000;
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./garment-pilot-firebase-adminsdk.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 function generateTrackingId() {
   const prefix = "PRCL"; // your brand prefix
@@ -22,6 +29,22 @@ function generateTrackingId() {
 // middleware
 app.use(cors());
 app.use(express.json());
+
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+  if (!token) {
+    return res.status(401).send({ message: "unauthorize access" });
+  }
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log("from decoded", decoded);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (error) {
+    res.status(401).send({ message: "unauthorized access" });
+  }
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.picyulc.mongodb.net/?appName=Cluster0`;
 
@@ -246,11 +269,15 @@ async function run() {
     });
 
     // buyer order related apis
-    app.get("/my-orders", async (req, res) => {
+    app.get("/my-orders", verifyFBToken, async (req, res) => {
       const query = {};
       const email = req.query.email;
+
       if (email) {
         query.buyer = email;
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
       }
       const cursor = ordersCollection.find(query);
       const result = await cursor.toArray();
