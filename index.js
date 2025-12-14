@@ -41,7 +41,7 @@ const verifyFBToken = async (req, res, next) => {
   try {
     const idToken = token.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log("from decoded", decoded);
+    // console.log("from decoded", decoded);
     req.decoded_email = decoded.email;
     next();
   } catch (error) {
@@ -270,6 +270,57 @@ async function run() {
         trackingId: trackingId,
       });
     });
+    // Manager related apis
+    app.get("/manage-products", verifyFBToken, async (req, res) => {
+      const query = {};
+      const { email, searchText } = req.query;
+      if (email) {
+        query.createdBy = email;
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+      }
+      if (searchText) {
+        query.$or = [
+          { name: { $regex: searchText, $options: "i" } },
+          { category: { $regex: searchText, $options: "i" } },
+        ];
+      }
+      const cursor = productsCollection.find(query).sort({
+        createdAt: -1,
+      });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.patch("/update-product/:id", async (req, res) => {
+      const id = req.params.id;
+      const updateInfo = req.body;
+      console.log(updateInfo);
+
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          name: updateInfo.name,
+          description: updateInfo.description,
+          category: updateInfo.category,
+          minimumOrderQuantity: updateInfo.minimumOrderQuantity,
+          paymentOptions: updateInfo.paymentOptions,
+          price: updateInfo.price,
+          quantity: updateInfo.quantity,
+          showOnHomePage: updateInfo.showOnHomePage,
+        },
+      };
+      const result = await productsCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+    app.delete("/delete-product/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await productsCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      res.send(result);
+    });
 
     // buyer order related apis
     app.get("/my-orders", verifyFBToken, async (req, res) => {
@@ -282,7 +333,7 @@ async function run() {
           return res.status(403).send({ message: "forbidden access" });
         }
       }
-      const cursor = ordersCollection.find(query);
+      const cursor = ordersCollection.find(query).sort({ orderedAt: -1 });
       const result = await cursor.toArray();
       res.send(result);
     });
