@@ -156,7 +156,7 @@ async function run() {
 
       res.send({ url: session.url });
     });
-    // success payment api
+    // success payment api of stripe
     app.patch("/success-payment", async (req, res) => {
       const sessionId = req.query.session_id;
 
@@ -313,6 +313,19 @@ async function run() {
       const result = await productsCollection.updateOne(query, updateDoc);
       res.send(result);
     });
+    app.get("/pending-orders", async (req, res) => {
+      const { email, status } = req.query;
+      const query = {};
+      if (email) {
+        query.manager = email;
+      }
+      if (status) {
+        query.status = status;
+      }
+      const cursor = ordersCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
     app.delete("/delete-product/:id", async (req, res) => {
       const id = req.params.id;
       const result = await productsCollection.deleteOne({
@@ -343,7 +356,6 @@ async function run() {
       const result = await ordersCollection.deleteOne({
         _id: new ObjectId(id),
       });
-
       res.send(result);
     });
 
