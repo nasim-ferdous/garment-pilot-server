@@ -109,7 +109,7 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.get("/products/:id", async (req, res) => {
+    app.get("/products/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await productsCollection.findOne(query);
@@ -292,7 +292,7 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.patch("/update-product/:id", async (req, res) => {
+    app.patch("/update-product/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const updateInfo = req.body;
       console.log(updateInfo);
@@ -326,7 +326,19 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.delete("/delete-product/:id", async (req, res) => {
+    app.patch("/approve-order/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          status: "approved",
+          approvedAt: new Date().toLocaleString(),
+        },
+      };
+      const result = await ordersCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+    app.delete("/delete-product/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const result = await productsCollection.deleteOne({
         _id: new ObjectId(id),
