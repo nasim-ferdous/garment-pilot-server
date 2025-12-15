@@ -313,6 +313,15 @@ async function run() {
       const result = await productsCollection.updateOne(query, updateDoc);
       res.send(result);
     });
+    app.delete("/delete-product/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const result = await productsCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      res.send(result);
+    });
+
     app.get("/pending-orders", async (req, res) => {
       const { email, status } = req.query;
       const query = {};
@@ -338,12 +347,29 @@ async function run() {
       const result = await ordersCollection.updateOne(query, updateDoc);
       res.send(result);
     });
-    app.delete("/delete-product/:id", verifyFBToken, async (req, res) => {
+    app.patch("/reject-order/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
-      const result = await productsCollection.deleteOne({
-        _id: new ObjectId(id),
-      });
-
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          status: "rejected",
+          rejectedAt: new Date().toLocaleString(),
+        },
+      };
+      const result = await ordersCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+    app.get("/approved-orders", async (req, res) => {
+      const { email, status } = req.query;
+      const query = {};
+      if (email) {
+        query.manager = email;
+      }
+      if (status) {
+        query.status = status;
+      }
+      const cursor = ordersCollection.find(query);
+      const result = await cursor.toArray();
       res.send(result);
     });
 
