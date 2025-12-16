@@ -437,6 +437,44 @@ async function run() {
       const result = await usersCollection.updateOne(query, updatedInfo);
       res.send(result);
     });
+    app.get("/all-products", verifyFBToken, async (req, res) => {
+      const query = {};
+      const { searchText } = req.query;
+      if (searchText) {
+        query.$or = [
+          { name: { $regex: searchText, $options: "i" } },
+          { category: { $regex: searchText, $options: "i" } },
+        ];
+      }
+      const cursor = productsCollection.find(query).sort({ createdAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.patch("/products/show-on-home/:id", verifyFBToken, async (req, res) => {
+      const { id } = req.params;
+      const { showOnHomePage } = req.body;
+
+      const result = await productsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            showOnHomePage,
+          },
+        }
+      );
+
+      res.send(result);
+    });
+    app.get("/all-orders", verifyFBToken, async (req, res) => {
+      const query = {};
+      const { searchText } = req.query;
+      if (searchText) {
+        query.status = { $regex: searchText, $options: "i" };
+      }
+      const cursor = ordersCollection.find(query).sort({ orderedAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
     // buyer order related apis
     app.get("/my-orders", verifyFBToken, async (req, res) => {
