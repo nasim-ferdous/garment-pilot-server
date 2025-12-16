@@ -69,6 +69,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const productsCollection = db.collection("products");
     const ordersCollection = db.collection("orders");
+    const trackingCollection = db.collection("trackings");
 
     // users api
     app.post("/users", async (req, res) => {
@@ -359,7 +360,7 @@ async function run() {
       const result = await ordersCollection.updateOne(query, updateDoc);
       res.send(result);
     });
-    app.get("/approved-orders", async (req, res) => {
+    app.get("/approved-orders", verifyFBToken, async (req, res) => {
       const { email, status } = req.query;
       const query = {};
       if (email) {
@@ -370,6 +371,70 @@ async function run() {
       }
       const cursor = ordersCollection.find(query);
       const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.post("/add-tracking", verifyFBToken, async (req, res) => {
+      const tracking = req.body;
+      const existing = await trackingCollection.findOne({
+        orderId: tracking.orderId,
+        status: tracking.status,
+      });
+
+      if (existing) {
+        return res.status(400).send({ message: "Status already exists" });
+      }
+
+      const result = await trackingCollection.insertOne({
+        ...tracking,
+        createdAt: new Date(),
+      });
+
+      res.send(result);
+    });
+    // get my profile
+    app.get("/my-profile", verifyFBToken, async (req, res) => {
+      const email = req.decoded_email;
+
+      const user = await usersCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(404).send({ message: "User not found" });
+      }
+
+      res.send(user);
+    });
+    // manager trackOrder
+    app.get("/track-order/:orderId", verifyFBToken, async (req, res) => {
+      const orderId = req.params.orderId;
+      const result = await trackingCollection.find({ orderId }).toArray();
+      res.send(result);
+    });
+
+    // admin related api
+    app.get("/manage-users", async (req, res) => {
+      const cursor = usersCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.patch("/users/:id/status", verifyFBToken, async (req, res) => {
+      const { status, suspendReason } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+
+      const updateDoc = {
+        status,
+        updatedAt: new Date(),
+      };
+
+      if (status === "suspended") {
+        updateDoc.suspendReason = suspendReason;
+      } else {
+        updateDoc.suspendReason = "";
+      }
+      const updatedInfo = {
+        $set: updateDoc,
+      };
+      const result = await usersCollection.updateOne(query, updatedInfo);
       res.send(result);
     });
 
