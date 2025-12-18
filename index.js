@@ -71,6 +71,39 @@ async function run() {
     const ordersCollection = db.collection("orders");
     const trackingCollection = db.collection("trackings");
 
+    // middleware for verify user Role
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden" });
+      }
+      next();
+    };
+    const verifyManager = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+
+      if (!user || user.role !== "manager") {
+        return res.status(403).send({ message: "Forbidden" });
+      }
+      next();
+    };
+
+    const verifyBuyer = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+
+      if (!user || user.role !== "buyer") {
+        return res.status(403).send({ message: "Forbidden" });
+      }
+      next();
+    };
+
     // users api
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -82,18 +115,55 @@ async function run() {
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
+    app.get("/users/:email/role", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      res.send({ role: user?.role || "buyer" });
+    });
+    app.get("/users/:email/suspend", verifyFBToken, async (req, res) => {
+      const { email } = req.params;
+
+      if (email !== req.decoded_email) {
+        return res.status(403).send({ message: "forbidden" });
+      }
+
+      const user = await usersCollection.findOne({ email });
+
+      res.send({
+        status: user?.status || "approved",
+        suspendReason: user?.suspendReason || "",
+        suspendFeedback: user?.suspendFeedback || "",
+      });
+    });
 
     // products api
     // all product
     app.get("/products", async (req, res) => {
       const query = {};
-      const { email } = req.query;
+      const { email, page = 1, limit = 10 } = req.query;
+
       if (email) {
         query.createdBy = email;
       }
-      const cursor = productsCollection.find(query).sort({ createdAt: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
+
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+
+      const cursor = productsCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit));
+      const products = await cursor.toArray();
+
+      const totalProducts = await productsCollection.countDocuments(query);
+
+      res.send({
+        products,
+        totalProducts,
+        totalPages: Math.ceil(totalProducts / parseInt(limit)),
+        currentPage: parseInt(page),
+      });
     });
     // our products
     app.get("/our-products", async (req, res) => {
@@ -117,7 +187,7 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/products", async (req, res) => {
+    app.post("/products", verifyFBToken, verifyManager, async (req, res) => {
       const product = req.body;
       const result = await productsCollection.insertOne(product);
       res.send(result);
@@ -272,125 +342,165 @@ async function run() {
       });
     });
     // Manager related apis
-    app.get("/manage-products", verifyFBToken, async (req, res) => {
-      const query = {};
-      const { email, searchText } = req.query;
-      if (email) {
-        query.createdBy = email;
-        if (email !== req.decoded_email) {
-          return res.status(403).send({ message: "forbidden access" });
+    app.get(
+      "/manage-products",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const query = {};
+        const { email, searchText } = req.query;
+        if (email) {
+          query.createdBy = email;
+          if (email !== req.decoded_email) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
         }
+        if (searchText) {
+          query.$or = [
+            { name: { $regex: searchText, $options: "i" } },
+            { category: { $regex: searchText, $options: "i" } },
+          ];
+        }
+        const cursor = productsCollection.find(query).sort({
+          createdAt: -1,
+        });
+        const result = await cursor.toArray();
+        res.send(result);
       }
-      if (searchText) {
-        query.$or = [
-          { name: { $regex: searchText, $options: "i" } },
-          { category: { $regex: searchText, $options: "i" } },
-        ];
-      }
-      const cursor = productsCollection.find(query).sort({
-        createdAt: -1,
-      });
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-    app.patch("/update-product/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
-      const updateInfo = req.body;
-      console.log(updateInfo);
+    );
+    app.patch(
+      "/update-product/:id",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const id = req.params.id;
+        const updateInfo = req.body;
+        console.log(updateInfo);
 
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          name: updateInfo.name,
-          description: updateInfo.description,
-          category: updateInfo.category,
-          minimumOrderQuantity: updateInfo.minimumOrderQuantity,
-          paymentOptions: updateInfo.paymentOptions,
-          price: updateInfo.price,
-          quantity: updateInfo.quantity,
-          showOnHomePage: updateInfo.showOnHomePage,
-        },
-      };
-      const result = await productsCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
-    app.delete("/delete-product/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
-      const result = await productsCollection.deleteOne({
-        _id: new ObjectId(id),
-      });
-
-      res.send(result);
-    });
-
-    app.get("/pending-orders", async (req, res) => {
-      const { email, status } = req.query;
-      const query = {};
-      if (email) {
-        query.manager = email;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            name: updateInfo.name,
+            description: updateInfo.description,
+            category: updateInfo.category,
+            minimumOrderQuantity: updateInfo.minimumOrderQuantity,
+            paymentOptions: updateInfo.paymentOptions,
+            price: updateInfo.price,
+            quantity: updateInfo.quantity,
+            showOnHomePage: updateInfo.showOnHomePage,
+          },
+        };
+        const result = await productsCollection.updateOne(query, updateDoc);
+        res.send(result);
       }
-      if (status) {
-        query.status = status;
-      }
-      const cursor = ordersCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-    app.patch("/approve-order/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          status: "approved",
-          approvedAt: new Date().toLocaleString(),
-        },
-      };
-      const result = await ordersCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
-    app.patch("/reject-order/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          status: "rejected",
-          rejectedAt: new Date().toLocaleString(),
-        },
-      };
-      const result = await ordersCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
-    app.get("/approved-orders", verifyFBToken, async (req, res) => {
-      const { email, status } = req.query;
-      const query = {};
-      if (email) {
-        query.manager = email;
-      }
-      if (status) {
-        query.status = status;
-      }
-      const cursor = ordersCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-    app.post("/add-tracking", verifyFBToken, async (req, res) => {
-      const tracking = req.body;
-      const existing = await trackingCollection.findOne({
-        orderId: tracking.orderId,
-        status: tracking.status,
-      });
+    );
+    app.delete(
+      "/delete-product/:id",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const id = req.params.id;
+        const result = await productsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
 
-      if (existing) {
-        return res.status(400).send({ message: "Status already exists" });
+        res.send(result);
       }
+    );
 
-      const result = await trackingCollection.insertOne({
-        ...tracking,
-        createdAt: new Date(),
-      });
+    app.get(
+      "/pending-orders",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const { email, status } = req.query;
+        const query = {};
+        if (email) {
+          query.manager = email;
+        }
+        if (status) {
+          query.status = status;
+        }
+        const cursor = ordersCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      }
+    );
+    app.patch(
+      "/approve-order/:id",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            status: "approved",
+            approvedAt: new Date().toLocaleString(),
+          },
+        };
+        const result = await ordersCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
+    app.patch(
+      "/reject-order/:id",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            status: "rejected",
+            rejectedAt: new Date().toLocaleString(),
+          },
+        };
+        const result = await ordersCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
+    app.get(
+      "/approved-orders",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const { email, status } = req.query;
+        const query = {};
+        if (email) {
+          query.manager = email;
+        }
+        if (status) {
+          query.status = status;
+        }
+        const cursor = ordersCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      }
+    );
+    app.post(
+      "/add-tracking",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const tracking = req.body;
+        const existing = await trackingCollection.findOne({
+          orderId: tracking.orderId,
+          status: tracking.status,
+        });
 
-      res.send(result);
-    });
+        if (existing) {
+          return res.status(400).send({ message: "Status already exists" });
+        }
+
+        const result = await trackingCollection.insertOne({
+          ...tracking,
+          createdAt: new Date(),
+        });
+
+        res.send(result);
+      }
+    );
     // get my profile
     app.get("/my-profile", verifyFBToken, async (req, res) => {
       const email = req.decoded_email;
@@ -411,33 +521,49 @@ async function run() {
     });
 
     // admin related api
-    app.get("/manage-users", async (req, res) => {
-      const cursor = usersCollection.find();
+    app.get("/manage-users", verifyFBToken, verifyAdmin, async (req, res) => {
+      const query = {};
+      const { searchText } = req.query;
+      if (searchText) {
+        query.$or = [
+          { displayName: { $regex: searchText, $options: "i" } },
+          { email: { $regex: searchText, $options: "i" } },
+        ];
+      }
+      const cursor = usersCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.patch("/users/:id/status", verifyFBToken, async (req, res) => {
-      const { status, suspendReason } = req.body;
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
+    app.patch(
+      "/users/:id/status",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const { status, suspendReason, suspendFeedback } = req.body;
 
-      const updateDoc = {
-        status,
-        updatedAt: new Date(),
-      };
+        const updateDoc = {
+          status,
+          updatedAt: new Date(),
+        };
 
-      if (status === "suspended") {
-        updateDoc.suspendReason = suspendReason;
-      } else {
-        updateDoc.suspendReason = "";
+        if (status === "suspended") {
+          updateDoc.suspendReason = suspendReason || "";
+          updateDoc.suspendFeedback = suspendFeedback || "";
+        } else {
+          updateDoc.suspendReason = "";
+          updateDoc.suspendFeedback = "";
+        }
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateDoc }
+        );
+
+        res.send(result);
       }
-      const updatedInfo = {
-        $set: updateDoc,
-      };
-      const result = await usersCollection.updateOne(query, updatedInfo);
-      res.send(result);
-    });
-    app.get("/all-products", verifyFBToken, async (req, res) => {
+    );
+    app.get("/all-products", verifyFBToken, verifyAdmin, async (req, res) => {
       const query = {};
       const { searchText } = req.query;
       if (searchText) {
@@ -450,22 +576,27 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.patch("/products/show-on-home/:id", verifyFBToken, async (req, res) => {
-      const { id } = req.params;
-      const { showOnHomePage } = req.body;
+    app.patch(
+      "/products/show-on-home/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const { showOnHomePage } = req.body;
 
-      const result = await productsCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: {
-            showOnHomePage,
-          },
-        }
-      );
+        const result = await productsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              showOnHomePage,
+            },
+          }
+        );
 
-      res.send(result);
-    });
-    app.get("/all-orders", verifyFBToken, async (req, res) => {
+        res.send(result);
+      }
+    );
+    app.get("/all-orders", verifyFBToken, verifyAdmin, async (req, res) => {
       const query = {};
       const { searchText } = req.query;
       if (searchText) {
@@ -477,7 +608,7 @@ async function run() {
     });
 
     // buyer order related apis
-    app.get("/my-orders", verifyFBToken, async (req, res) => {
+    app.get("/my-orders", verifyFBToken, verifyBuyer, async (req, res) => {
       const query = {};
       const email = req.query.email;
 
@@ -492,13 +623,18 @@ async function run() {
       res.send(result);
     });
     // cancel order
-    app.delete("/cancel-order/:id", async (req, res) => {
-      const id = req.params.id;
-      const result = await ordersCollection.deleteOne({
-        _id: new ObjectId(id),
-      });
-      res.send(result);
-    });
+    app.delete(
+      "/cancel-order/:id",
+      verifyFBToken,
+      verifyBuyer,
+      async (req, res) => {
+        const id = req.params.id;
+        const result = await ordersCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.send(result);
+      }
+    );
 
     // Send a ping to confirm a successful connection
 
