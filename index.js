@@ -9,7 +9,7 @@ const port = process.env.PORT || 3000;
 const admin = require("firebase-admin");
 
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
-  "utf8"
+  "utf8",
 );
 const serviceAccount = JSON.parse(decoded);
 
@@ -63,7 +63,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("garmentPilot");
     const usersCollection = db.collection("users");
@@ -71,11 +71,14 @@ async function run() {
     const ordersCollection = db.collection("orders");
     const trackingCollection = db.collection("trackings");
 
+    const demoEmails = ["moin@uddin.com", "momin@ul.com", "jam@sed.com"];
+
     // middleware for verify user Role
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
       const query = { email };
       const user = await usersCollection.findOne(query);
+      console.log(user);
 
       if (!user || user.role !== "admin") {
         return res.status(403).send({ message: "Forbidden" });
@@ -100,6 +103,17 @@ async function run() {
 
       if (!user || user.role !== "buyer") {
         return res.status(403).send({ message: "Forbidden" });
+      }
+      next();
+    };
+    const verifyNotDemo = (req, res, next) => {
+      const email = req.decoded_email;
+      if (demoEmails.includes(email)) {
+        return res.status(403).send({
+          success: false,
+          message:
+            "Forbidden: Demo accounts are in Read-Only mode. Please create your own account to test update/delete features.",
+        });
       }
       next();
     };
@@ -142,6 +156,13 @@ async function run() {
     app.get("/products", async (req, res) => {
       const query = {};
       const { email, page = 1, limit = 10 } = req.query;
+      const { searchText } = req.query;
+      if (searchText) {
+        query.$or = [
+          { name: { $regex: searchText, $options: "i" } },
+          { category: { $regex: searchText, $options: "i" } },
+        ];
+      }
 
       if (email) {
         query.createdBy = email;
@@ -180,18 +201,24 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.get("/products/:id", verifyFBToken, async (req, res) => {
+    app.get("/products/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await productsCollection.findOne(query);
       res.send(result);
     });
 
-    app.post("/products", verifyFBToken, verifyManager, async (req, res) => {
-      const product = req.body;
-      const result = await productsCollection.insertOne(product);
-      res.send(result);
-    });
+    app.post(
+      "/products",
+      verifyFBToken,
+      verifyManager,
+      verifyNotDemo,
+      async (req, res) => {
+        const product = req.body;
+        const result = await productsCollection.insertOne(product);
+        res.send(result);
+      },
+    );
 
     // payment related api of stripe
     app.post("/create-checkout-session", async (req, res) => {
@@ -266,7 +293,7 @@ async function run() {
       //  Update product quantity
       const result = await productsCollection.updateOne(
         productQuery,
-        updatedProduct
+        updatedProduct,
       );
 
       //  Create order
@@ -317,7 +344,7 @@ async function run() {
       //  Update product quantity
       const result = await productsCollection.updateOne(
         productQuery,
-        updatedProduct
+        updatedProduct,
       );
       //  Create order
       const orderInfo = {
@@ -366,12 +393,12 @@ async function run() {
         });
         const result = await cursor.toArray();
         res.send(result);
-      }
+      },
     );
     app.patch(
       "/update-product/:id",
       verifyFBToken,
-      verifyManager,
+      verifyNotDemo,
       async (req, res) => {
         const id = req.params.id;
         const updateInfo = req.body;
@@ -392,12 +419,12 @@ async function run() {
         };
         const result = await productsCollection.updateOne(query, updateDoc);
         res.send(result);
-      }
+      },
     );
     app.delete(
       "/delete-product/:id",
       verifyFBToken,
-      verifyManager,
+      verifyNotDemo,
       async (req, res) => {
         const id = req.params.id;
         const result = await productsCollection.deleteOne({
@@ -405,7 +432,7 @@ async function run() {
         });
 
         res.send(result);
-      }
+      },
     );
 
     app.get(
@@ -424,12 +451,13 @@ async function run() {
         const cursor = ordersCollection.find(query);
         const result = await cursor.toArray();
         res.send(result);
-      }
+      },
     );
     app.patch(
       "/approve-order/:id",
       verifyFBToken,
       verifyManager,
+      verifyNotDemo,
       async (req, res) => {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -441,12 +469,13 @@ async function run() {
         };
         const result = await ordersCollection.updateOne(query, updateDoc);
         res.send(result);
-      }
+      },
     );
     app.patch(
       "/reject-order/:id",
       verifyFBToken,
       verifyManager,
+      verifyNotDemo,
       async (req, res) => {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -458,7 +487,7 @@ async function run() {
         };
         const result = await ordersCollection.updateOne(query, updateDoc);
         res.send(result);
-      }
+      },
     );
     app.get(
       "/approved-orders",
@@ -476,12 +505,13 @@ async function run() {
         const cursor = ordersCollection.find(query);
         const result = await cursor.toArray();
         res.send(result);
-      }
+      },
     );
     app.post(
       "/add-tracking",
       verifyFBToken,
       verifyManager,
+      verifyNotDemo,
       async (req, res) => {
         const tracking = req.body;
         const existing = await trackingCollection.findOne({
@@ -499,7 +529,7 @@ async function run() {
         });
 
         res.send(result);
-      }
+      },
     );
     // get my profile
     app.get("/my-profile", verifyFBToken, async (req, res) => {
@@ -538,6 +568,7 @@ async function run() {
       "/users/:id/status",
       verifyFBToken,
       verifyAdmin,
+      verifyNotDemo,
       async (req, res) => {
         const { id } = req.params;
         const { status, suspendReason, suspendFeedback } = req.body;
@@ -557,11 +588,11 @@ async function run() {
 
         const result = await usersCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: updateDoc }
+          { $set: updateDoc },
         );
 
         res.send(result);
-      }
+      },
     );
     app.get("/all-products", verifyFBToken, verifyAdmin, async (req, res) => {
       const query = {};
@@ -580,6 +611,7 @@ async function run() {
       "/products/show-on-home/:id",
       verifyFBToken,
       verifyAdmin,
+      verifyNotDemo,
       async (req, res) => {
         const { id } = req.params;
         const { showOnHomePage } = req.body;
@@ -590,11 +622,11 @@ async function run() {
             $set: {
               showOnHomePage,
             },
-          }
+          },
         );
 
         res.send(result);
-      }
+      },
     );
     app.get("/all-orders", verifyFBToken, verifyAdmin, async (req, res) => {
       const query = {};
@@ -627,20 +659,21 @@ async function run() {
       "/cancel-order/:id",
       verifyFBToken,
       verifyBuyer,
+      verifyNotDemo,
       async (req, res) => {
         const id = req.params.id;
         const result = await ordersCollection.deleteOne({
           _id: new ObjectId(id),
         });
         res.send(result);
-      }
+      },
     );
 
     // Send a ping to confirm a successful connection
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
+      "Pinged your deployment. You successfully connected to MongoDB!",
     );
   } finally {
     // Ensures that the client will close when you finish/error

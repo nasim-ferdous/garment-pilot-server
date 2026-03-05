@@ -1,3 +1,4 @@
 node_modules
 .env
 garment-pilot-firebase-adminsdk.json
+.vercel
